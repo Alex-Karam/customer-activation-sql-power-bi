@@ -1,0 +1,15 @@
+# Keep source observations, embedded models and local settings outside this repo.
+*.pbix
+*.pbit
+*.bak
+*.log
+.env
+.env.*
+credentials*
+connection.local*
+data/
+sources/
+private/
+tmp/
+.DS_Store
+Thumbs.db
