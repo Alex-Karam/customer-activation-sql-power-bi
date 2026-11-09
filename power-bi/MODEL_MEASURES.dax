@@ -1,0 +1,279 @@
+// Model documentation for the Customer Activation case study.
+// These are separate Power BI calculated-table and measure definitions,
+// not one executable DAX query. They document the project workflow; they
+// are not a binary/model export from the PBIX. The saved PBIX is the
+// private reference artifact; public controls are in ../docs/validation.md.
+// The six fixed-window measures are in WINDOW_MEASURES.dax.
+
+// Import customer_activation_case.v_customer_repeat_metrics as Customers.
+// Relationship: Signup Calendar[Date] (1) -> Customers[account_created_date] (*).
+// Active, Single direction. All other helper tables stay disconnected.
+
+// CALCULATED TABLES: create one at a time with New table.
+
+Signup Calendar =
+ADDCOLUMNS(
+    CALENDAR(DATE(2021, 1, 1), DATE(2022, 12, 31)),
+    "Signup Month", FORMAT([Date], "yyyy-MM")
+)
+
+Activation Stages =
+DATATABLE(
+    "Stage Order", INTEGER,
+    "Stage", STRING,
+    {
+        {1, "Registered"},
+        {2, "Funded"},
+        {3, "Eligible funded"},
+        {4, "Interest on/after funding"}
+    }
+)
+
+Conversion Windows =
+DATATABLE("Window Days", INTEGER, {{1}, {7}, {30}})
+
+Delay Journeys =
+DATATABLE(
+    "Journey Order", INTEGER,
+    "Journey", STRING,
+    {
+        {1, "Signup to funding"},
+        {2, "Funding to Interest"}
+    }
+)
+
+Delay Bands =
+DATATABLE(
+    "Band Order", INTEGER,
+    "Delay Band", STRING,
+    "Lower Days", INTEGER,
+    "Upper Days", INTEGER,
+    {
+        {1, "0 days", 0, 0},
+        {2, "1–7 days", 1, 7},
+        {3, "8–30 days", 8, 30},
+        {4, "31–90 days", 31, 90},
+        {5, "91+ days", 91, BLANK()}
+    }
+)
+
+// Sort Stage by Stage Order and Delay Band by Band Order.
+// Window Days is Don't summarize in table visuals.
+// Journey order in the reviewed report remains alphabetical.
+
+// SNAPSHOT MEASURES: home table Customers, unless specified otherwise.
+
+Total Customers =
+COALESCE(COUNTROWS(Customers), 0)
+
+Funded Customers =
+CALCULATE(
+    [Total Customers],
+    NOT ISBLANK(Customers[first_funding_date])
+)
+
+Funding Conversion % =
+DIVIDE([Funded Customers], [Total Customers])
+
+Interest Customers =
+CALCULATE(
+    [Total Customers],
+    NOT ISBLANK(Customers[first_interest_date])
+)
+
+Interest Adoption % =
+DIVIDE([Interest Customers], [Total Customers])
+
+Eligible Funded Customers =
+COALESCE(
+    COUNTROWS(
+        FILTER(
+            Customers,
+            NOT ISBLANK(Customers[first_funding_date])
+                && (
+                    ISBLANK(Customers[first_interest_date])
+                    || Customers[first_interest_date]
+                        >= Customers[first_funding_date]
+                )
+        )
+    ),
+    0
+)
+
+Sequential Interest Customers =
+COALESCE(
+    COUNTROWS(
+        FILTER(Customers, NOT ISBLANK(Customers[days_funding_to_interest]))
+    ),
+    0
+)
+
+Funding to Interest Conversion % =
+DIVIDE([Sequential Interest Customers], [Eligible Funded Customers])
+
+// Home table Activation Stages. This switches existing measures;
+// Stage 3 is an eligibility adjustment, not a new customer action.
+Funnel Customers =
+SWITCH(
+    SELECTEDVALUE('Activation Stages'[Stage Order]),
+    1, [Total Customers],
+    2, [Funded Customers],
+    3, [Eligible Funded Customers],
+    4, [Sequential Interest Customers],
+    BLANK()
+)
+
+// DELAY MEASURES: home table Delay Journeys.
+// Duration columns are NULL/BLANK for absent or excluded outcomes;
+// all statistics below describe observed converters through the cutoff.
+
+Observed Converters =
+SWITCH(
+    SELECTEDVALUE('Delay Journeys'[Journey Order]),
+    1, [Funded Customers],
+    2, [Sequential Interest Customers],
+    BLANK()
+)
+
+Mean Delay (Days) =
+SWITCH(
+    SELECTEDVALUE('Delay Journeys'[Journey Order]),
+    1, AVERAGE(Customers[days_to_first_funding]),
+    2, AVERAGE(Customers[days_funding_to_interest]),
+    BLANK()
+)
+
+Median Delay (Days) =
+SWITCH(
+    SELECTEDVALUE('Delay Journeys'[Journey Order]),
+    1, MEDIAN(Customers[days_to_first_funding]),
+    2, MEDIAN(Customers[days_funding_to_interest]),
+    BLANK()
+)
+
+P90 Delay (Days) =
+VAR JourneyOrder = SELECTEDVALUE('Delay Journeys'[Journey Order])
+VAR Delays =
+    FILTER(
+        SELECTCOLUMNS(
+            Customers,
+            "DelayDays",
+                SWITCH(
+                    JourneyOrder,
+                    1, Customers[days_to_first_funding],
+                    2, Customers[days_funding_to_interest],
+                    BLANK()
+                )
+        ),
+        NOT ISBLANK([DelayDays])
+    )
+VAR Rank90 = ROUNDUP(0.90 * COUNTROWS(Delays), 0)
+RETURN
+IF(
+    Rank90 > 0,
+    MAXX(TOPN(Rank90, Delays, [DelayDays], ASC), [DelayDays]),
+    BLANK()
+)
+
+Maximum Delay (Days) =
+SWITCH(
+    SELECTEDVALUE('Delay Journeys'[Journey Order]),
+    1, MAX(Customers[days_to_first_funding]),
+    2, MAX(Customers[days_funding_to_interest]),
+    BLANK()
+)
+
+Same-Day Share % =
+VAR SameDayCustomers =
+    SWITCH(
+        SELECTEDVALUE('Delay Journeys'[Journey Order]),
+        1, COUNTROWS(FILTER(Customers, Customers[days_to_first_funding] == 0)),
+        2, COUNTROWS(FILTER(Customers, Customers[days_funding_to_interest] == 0)),
+        BLANK()
+    )
+RETURN
+DIVIDE(COALESCE(SameDayCustomers, 0), [Observed Converters])
+
+// BAND MEASURES: home table Delay Bands.
+// LowerDays = 0 is valid; ISBLANK protects it from the missing-selection case.
+
+Converters in Band =
+VAR JourneyOrder = SELECTEDVALUE('Delay Journeys'[Journey Order])
+VAR LowerDays = SELECTEDVALUE('Delay Bands'[Lower Days])
+VAR UpperDays = SELECTEDVALUE('Delay Bands'[Upper Days])
+RETURN
+IF(
+    ISBLANK(JourneyOrder) || ISBLANK(LowerDays),
+    BLANK(),
+    COALESCE(
+        COUNTROWS(
+            FILTER(
+                Customers,
+                VAR DelayDays =
+                    SWITCH(
+                        JourneyOrder,
+                        1, Customers[days_to_first_funding],
+                        2, Customers[days_funding_to_interest]
+                    )
+                RETURN
+                    NOT ISBLANK(DelayDays)
+                        && DelayDays >= LowerDays
+                        && (ISBLANK(UpperDays) || DelayDays <= UpperDays)
+            )
+        ),
+        0
+    )
+)
+
+Delay Band Share % =
+DIVIDE([Converters in Band], [Observed Converters])
+
+// REPEAT MEASURES: home table Customers. All funded paths are eligible.
+// Repeat days are 1..N, with N full days of follow-up after first funding.
+
+Eligible Funded (Repeat Window) =
+VAR WindowDays = SELECTEDVALUE('Conversion Windows'[Window Days])
+RETURN
+IF(
+    WindowDays IN {7, 30},
+    COALESCE(
+        COUNTROWS(
+            FILTER(
+                Customers,
+                NOT ISBLANK(Customers[first_funding_date])
+                    && Customers[funding_followup_days] >= WindowDays
+            )
+        ),
+        0
+    ),
+    BLANK()
+)
+
+Repeat Funders Within Window =
+VAR WindowDays = SELECTEDVALUE('Conversion Windows'[Window Days])
+RETURN
+IF(
+    WindowDays IN {7, 30},
+    COALESCE(
+        COUNTROWS(
+            FILTER(
+                Customers,
+                Customers[funding_followup_days] >= WindowDays
+                    && NOT ISBLANK(Customers[days_to_repeat_funding])
+                    && Customers[days_to_repeat_funding] >= 1
+                    && Customers[days_to_repeat_funding] <= WindowDays
+            )
+        ),
+        0
+    ),
+    BLANK()
+)
+
+Repeat Funding Rate % =
+DIVIDE([Repeat Funders Within Window], [Eligible Funded (Repeat Window)])
+
+// FORMATTING
+// Counts: whole number, 0 decimals, thousands separators.
+// Mean/median: 2 decimals. P90/max: integer days. Rates: percentage, 2 decimals.
+// Distribution chart annotations alone: 1 decimal; exact counts are alongside.
+// Undefined rates stay BLANK. Do not average rates or cohort medians.

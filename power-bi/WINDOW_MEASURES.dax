@@ -1,0 +1,100 @@
+// Verified on 4 November 2026 against SQL Steps 19 and 20.
+// Create each measure separately under Customers in Power BI.
+// Conversion Windows is disconnected; Window Days contains 1, 7, 30.
+// A missing/non-unique window returns BLANK, not a sum across windows.
+
+Eligible Signups (Window) =
+VAR WindowDays =
+    SELECTEDVALUE('Conversion Windows'[Window Days])
+RETURN
+IF(
+    ISBLANK(WindowDays),
+    BLANK(),
+    COALESCE(
+        COUNTROWS(
+            FILTER(
+                Customers,
+                Customers[signup_followup_days] >= WindowDays
+            )
+        ),
+        0
+    )
+)
+
+Funded Within Window =
+VAR WindowDays =
+    SELECTEDVALUE('Conversion Windows'[Window Days])
+RETURN
+IF(
+    ISBLANK(WindowDays),
+    BLANK(),
+    COALESCE(
+        COUNTROWS(
+            FILTER(
+                Customers,
+                Customers[signup_followup_days] >= WindowDays
+                    && NOT ISBLANK(Customers[days_to_first_funding])
+                    && Customers[days_to_first_funding] >= 0
+                    && Customers[days_to_first_funding] <= WindowDays
+            )
+        ),
+        0
+    )
+)
+
+Funding Conversion % (Window) =
+DIVIDE(
+    [Funded Within Window],
+    [Eligible Signups (Window)]
+)
+
+Eligible Funded (Window) =
+VAR WindowDays =
+    SELECTEDVALUE('Conversion Windows'[Window Days])
+RETURN
+IF(
+    ISBLANK(WindowDays),
+    BLANK(),
+    COALESCE(
+        COUNTROWS(
+            FILTER(
+                Customers,
+                NOT ISBLANK(Customers[first_funding_date])
+                    && Customers[funding_followup_days] >= WindowDays
+                    && (
+                        ISBLANK(Customers[first_interest_date])
+                        || Customers[first_interest_date]
+                            >= Customers[first_funding_date]
+                    )
+            )
+        ),
+        0
+    )
+)
+
+Interest Within Window =
+VAR WindowDays =
+    SELECTEDVALUE('Conversion Windows'[Window Days])
+RETURN
+IF(
+    ISBLANK(WindowDays),
+    BLANK(),
+    COALESCE(
+        COUNTROWS(
+            FILTER(
+                Customers,
+                Customers[funding_followup_days] >= WindowDays
+                    && NOT ISBLANK(Customers[days_funding_to_interest])
+                    && Customers[days_funding_to_interest] >= 0
+                    && Customers[days_funding_to_interest] <= WindowDays
+            )
+        ),
+        0
+    )
+)
+
+Funding to Interest Conversion % (Window) =
+DIVIDE(
+    [Interest Within Window],
+    [Eligible Funded (Window)]
+)

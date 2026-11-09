@@ -1,0 +1,38 @@
+{
+  "name": "Portfolio - Blue and Orange",
+  "dataColors": [
+    "#0072B2",
+    "#D55E00",
+    "#000000",
+    "#56B4E9"
+  ],
+  "background": "#FFFFFF",
+  "firstLevelElements": "#111827",
+  "secondLevelElements": "#374151",
+  "thirdLevelElements": "#D1D5DB",
+  "fourthLevelElements": "#4B5563",
+  "secondaryBackground": "#F3F4F6",
+  "tableAccent": "#0072B2",
+  "textClasses": {
+    "label": {
+      "fontFace": "Segoe UI",
+      "fontSize": 14,
+      "color": "#111827"
+    },
+    "title": {
+      "fontFace": "Segoe UI Semibold",
+      "fontSize": 16,
+      "color": "#111827"
+    },
+    "callout": {
+      "fontFace": "Segoe UI Semibold",
+      "fontSize": 36,
+      "color": "#111827"
+    },
+    "header": {
+      "fontFace": "Segoe UI Semibold",
+      "fontSize": 14,
+      "color": "#111827"
+    }
+  }
+}
